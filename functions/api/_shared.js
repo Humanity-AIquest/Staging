@@ -99,7 +99,9 @@ export async function getUser(request, env) {
 // Levels: 0=user, 1=viewer, 2=moderator, 3=editor, 4=manager, 5=super admin
 export function requireACL(user, minLevel) {
   if (!user) return jsonError("Authentication required. Please log in.", 401);
-  if (user.role !== "admin" && user.acl_level < minLevel) {
+  // Must be an admin AND meet the required level. (Was '&&', which let any admin
+  // — even L1 — bypass the level check and perform L4/L5 actions.)
+  if (user.role !== "admin" || user.acl_level < minLevel) {
     return jsonError("You do not have permission for this action.", 403);
   }
   return null; // null means check passed
