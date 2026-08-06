@@ -3,12 +3,15 @@
  * Login with email + password, returns session token
  * Body: { email, password }
  */
-import { json, jsonError, optionsResponse, verifyPassword, generateToken, newId } from "../_shared.js";
+import { json, jsonError, optionsResponse, verifyPassword, generateToken, newId, ensureAuthSchema } from "../_shared.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;
 
   try {
+    // Ensure auth schema exists (idempotent)
+    await ensureAuthSchema(env);
+
     const body = await request.json();
     const { email, password } = body;
 
@@ -47,12 +50,16 @@ export async function onRequestPost(context) {
     // Create new session
     const token = generateToken();
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    const now = new Date().toISOString();
 
     await env.DB.prepare(
-      "INSERT INTO sessions (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)"
-    ).bind(newId(), user.id, token, expiresAt).run();
+      "INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)"
+    ).bind(newId(), user.id, token, expiresAt, now).run();
 
-    return json({
+    // Set both Bearer token + session cookie for resilience
+    const cookieHeader = `hrc_session=${token}; Path=/; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax`;
+
+    return new Response(JSON.stringify({
       success: true,
       user: {
         id: user.id,
@@ -62,6 +69,15 @@ export async function onRequestPost(context) {
         acl_level: user.acl_level,
       },
       token: token,
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Set-Cookie": cookieHeader,
+      },
     });
   } catch (err) {
     return jsonError("Login failed. Please try again.");

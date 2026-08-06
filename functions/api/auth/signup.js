@@ -1,18 +1,19 @@
 /**
  * POST /api/auth/signup
  * Register a new user account
- * Body: { email, password, display_name, phone, country, newsletter }
+ * Body: { email, password, display_name }
  */
-import { json, jsonError, optionsResponse, hashPassword, generateToken, newId } from "../_shared.js";
-import { sendTemplate } from "../_email.js";
-import { createLead } from "../_zoho.js";
+import { json, jsonError, optionsResponse, hashPassword, generateToken, newId, ensureAuthSchema } from "../_shared.js";
 
 export async function onRequestPost(context) {
   const { request, env } = context;
 
   try {
+    // Ensure auth schema exists (idempotent)
+    await ensureAuthSchema(env);
+
     const body = await request.json();
-    const { email, password, display_name, phone, country, newsletter } = body;
+    const { email, password, display_name } = body;
 
     // Validate
     if (!email || !password) {
@@ -23,11 +24,6 @@ export async function onRequestPost(context) {
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return jsonError("Please provide a valid email address.");
-    }
-
-    // Self-migrate: member fields collected at signup.
-    for (const col of ["phone TEXT", "country TEXT", "newsletter INTEGER DEFAULT 0"]) {
-      try { await env.DB.prepare(`ALTER TABLE users ADD COLUMN ${col}`).run(); } catch (e) { /* exists */ }
     }
 
     // Check if email already exists
@@ -43,30 +39,36 @@ export async function onRequestPost(context) {
     const userId = newId();
     const passHash = await hashPassword(password);
     const name = (display_name || email.split("@")[0]).trim().slice(0, 50);
-    const cleanEmail = email.toLowerCase().trim();
+    const now = new Date().toISOString();
 
     await env.DB.prepare(
-      "INSERT INTO users (id, email, password_hash, display_name, role, acl_level, status, phone, country, newsletter) VALUES (?, ?, ?, ?, 'user', 0, 'active', ?, ?, ?)"
-    ).bind(userId, cleanEmail, passHash, name, (phone || "").trim() || null, (country || "").trim() || null, newsletter ? 1 : 0).run();
+      "INSERT INTO users (id, email, password_hash, display_name, role, acl_level, status, created_at) VALUES (?, ?, ?, ?, 'user', 0, 'active', ?)"
+    ).bind(userId, email.toLowerCase().trim(), passHash, name, now).run();
 
     // Create session
     const token = generateToken();
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(); // 30 days
 
     await env.DB.prepare(
-      "INSERT INTO sessions (id, user_id, token, expires_at) VALUES (?, ?, ?, ?)"
-    ).bind(newId(), userId, token, expiresAt).run();
+      "INSERT INTO sessions (id, user_id, token, expires_at, created_at) VALUES (?, ?, ?, ?, ?)"
+    ).bind(newId(), userId, token, expiresAt, now).run();
 
-    // Best-effort: welcome email + CRM lead (both no-op until env secrets are set).
-    try { await sendTemplate(env, "welcome", { to: cleanEmail, toName: name, vars: { name } }); } catch (e) { /* non-critical */ }
-    try {
-      await createLead(env, { firstName: name, lastName: name, email: cleanEmail, phone, country, source: "Account signup" });
-    } catch (e) { /* non-critical */ }
+    // Set both Bearer token + session cookie for resilience
+    const cookieHeader = `hrc_session=${token}; Path=/; Max-Age=2592000; HttpOnly; Secure; SameSite=Lax`;
 
-    return json({
+    return new Response(JSON.stringify({
       success: true,
-      user: { id: userId, email: cleanEmail, display_name: name, role: "user", acl_level: 0 },
+      user: { id: userId, email: email.toLowerCase().trim(), display_name: name, role: "user", acl_level: 0 },
       token: token,
+    }), {
+      status: 200,
+      headers: {
+        "Content-Type": "application/json",
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        "Set-Cookie": cookieHeader,
+      },
     });
   } catch (err) {
     return jsonError("Registration failed. Please try again.");

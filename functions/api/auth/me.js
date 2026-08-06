@@ -1,14 +1,17 @@
 /**
  * GET /api/auth/me
- * Returns current user info (if logged in)
- * Ideas query wrapped in its own try/catch so a missing table never breaks auth
+ * Returns current user info (if logged in), plus their ideas and recent conversations
+ * Ideas/conversations queries wrapped in try/catch so missing tables don't break auth
  */
-import { json, jsonError, optionsResponse, getUser } from "../_shared.js";
+import { json, jsonError, optionsResponse, getUser, ensureAuthSchema } from "../_shared.js";
 
 export async function onRequestGet(context) {
   const { request, env } = context;
 
   try {
+    // Ensure auth schema exists (idempotent)
+    await ensureAuthSchema(env);
+
     const user = await getUser(request, env);
     if (!user) {
       return json({ authenticated: false });
@@ -64,6 +67,48 @@ export async function onRequestGet(context) {
       ideas = [];
     }
 
+    // Fetch user's conversations + recent messages
+    let conversations = [];
+    try {
+      const convResult = await env.DB.prepare(
+        `SELECT id, mode, title, created_at, updated_at
+         FROM conversations
+         WHERE user_id = ?
+         ORDER BY updated_at DESC
+         LIMIT 20`
+      ).bind(user.id).all();
+
+      conversations = (convResult.results || []).map(conv => ({
+        ...conv,
+        messages: [], // Will be filled below if requested
+      }));
+
+      // For each conversation, get the latest message as a preview
+      for (let i = 0; i < conversations.length; i++) {
+        try {
+          const msgPreview = await env.DB.prepare(
+            `SELECT id, role, content, created_at
+             FROM messages
+             WHERE conversation_id = ?
+             ORDER BY created_at DESC
+             LIMIT 1`
+          ).bind(conversations[i].id).first();
+          if (msgPreview) {
+            conversations[i].last_message = {
+              role: msgPreview.role,
+              preview: msgPreview.content.slice(0, 100), // First 100 chars
+              timestamp: msgPreview.created_at,
+            };
+          }
+        } catch (e) {
+          // Messages table may not exist yet
+        }
+      }
+    } catch (e) {
+      // Conversations table doesn't exist yet — return empty array
+      conversations = [];
+    }
+
     return json({
       authenticated: true,
       user: {
@@ -74,6 +119,7 @@ export async function onRequestGet(context) {
         acl_level: user.acl_level,
       },
       ideas,
+      conversations,
     });
   } catch (err) {
     return jsonError("Failed to get user info: " + err.message);
