@@ -1,8 +1,8 @@
 /**
  * /api/admin/users
- * GET         — List all users (L1+)
- * POST / PUT  — Update user status/role (both methods accepted; the admin UI POSTs)
- * DELETE      — Not used (we ban, never delete)
+ * GET    — List all users (L1+)
+ * PUT    — Update user status/role (varies by action)
+ * DELETE — Not used (we ban, never delete)
  */
 import { json, jsonError, optionsResponse, getUser, requireACL, newId } from "../_shared.js";
 
@@ -32,6 +32,7 @@ export async function onRequestGet(context) {
 
     const result = await env.DB.prepare(query).bind(...params).all();
 
+    // Get total count
     let countQuery = "SELECT COUNT(*) as total FROM users WHERE 1=1";
     const countParams = [];
     if (status) { countQuery += " AND status = ?"; countParams.push(status); }
@@ -49,35 +50,32 @@ export async function onRequestGet(context) {
   }
 }
 
-// body: { user_id, action, reason? | ban_reason?, acl_level? }
-// Actions: ban, suspend, activate, set_admin (alias: promote), revoke_admin (alias: revoke)
-async function handleUserUpdate(context) {
+// PUT /api/admin/users — body: { user_id, action, reason?, acl_level? }
+// Actions: ban, suspend, activate, set_admin, revoke_admin
+export async function onRequestPut(context) {
   const { request, env } = context;
   try {
     const admin = await getUser(request, env);
     const body = await request.json();
-    const { user_id, acl_level } = body;
-    const reason = body.reason || body.ban_reason; // UI sends ban_reason
-    let action = body.action;
+    const { user_id, action, reason, acl_level } = body;
 
     if (!user_id || !action) return jsonError("user_id and action required.");
 
-    // Normalise UI action names to the canonical backend actions.
-    if (action === "promote") action = "set_admin";
-    if (action === "revoke") action = "revoke_admin";
-
+    // Get target user
     const target = await env.DB.prepare(
       "SELECT id, email, display_name, role, acl_level, status FROM users WHERE id = ?"
     ).bind(user_id).first();
     if (!target) return jsonError("User not found.");
 
+    // Prevent self-modification
     if (admin.id === user_id) return jsonError("You cannot modify your own account.");
 
+    // Prevent modifying higher-level admins
     if (target.role === "admin" && target.acl_level >= admin.acl_level) {
       return jsonError("You cannot modify an admin at your level or above.");
     }
 
-    let logAction;
+    let update, logAction;
 
     switch (action) {
       case "ban": {
@@ -85,6 +83,7 @@ async function handleUserUpdate(context) {
         if (err) return err;
         await env.DB.prepare("UPDATE users SET status = 'banned', ban_reason = ?, updated_at = datetime('now') WHERE id = ?")
           .bind(reason || "Violated community guidelines", user_id).run();
+        // Kill their sessions
         await env.DB.prepare("DELETE FROM sessions WHERE user_id = ?").bind(user_id).run();
         logAction = `Banned user: ${reason || "No reason given"}`;
         break;
@@ -108,8 +107,7 @@ async function handleUserUpdate(context) {
       case "set_admin": {
         const err = requireACL(admin, 5);
         if (err) return err;
-        // Default to L4 (matches the admin UI); L5 can grant up to L4 only.
-        const level = Math.min(Math.max(parseInt(acl_level) || 4, 1), 4);
+        const level = Math.min(Math.max(parseInt(acl_level) || 1, 1), 4); // L5 can only set up to L4
         await env.DB.prepare("UPDATE users SET role = 'admin', acl_level = ?, updated_at = datetime('now') WHERE id = ?")
           .bind(level, user_id).run();
         logAction = `Promoted to admin L${level}`;
@@ -124,26 +122,40 @@ async function handleUserUpdate(context) {
         break;
       }
       default:
-        return jsonError("Invalid action. Use: ban, suspend, activate, promote, revoke.");
+        return jsonError("Invalid action. Use: ban, suspend, activate, set_admin, revoke_admin.");
     }
 
-    // Audit log — best-effort so a logging failure never fails the action.
+    // Ensure admin_actions table exists
     try {
-      await env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_actions (
-        id TEXT PRIMARY KEY, admin_id TEXT, action_type TEXT, target_type TEXT,
-        target_id TEXT, details TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-      )`).run();
+      await env.DB.prepare(`
+        CREATE TABLE IF NOT EXISTS admin_actions (
+          id TEXT PRIMARY KEY,
+          admin_id TEXT NOT NULL REFERENCES users(id),
+          action_type TEXT NOT NULL,
+          target_type TEXT,
+          target_id TEXT,
+          details TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+      `).run();
+    } catch (e) {
+      // Table already exists
+    }
+
+    // Log admin action
+    try {
       await env.DB.prepare(
         "INSERT INTO admin_actions (id, admin_id, action_type, target_type, target_id, details) VALUES (?, ?, ?, 'user', ?, ?)"
       ).bind(newId(), admin.id, action, user_id, logAction).run();
-    } catch (e) { /* audit is best-effort */ }
+    } catch (e) {
+      console.error('Failed to log admin action:', e);
+      // Don't fail the operation if logging fails
+    }
 
     return json({ success: true, action, user_id, message: logAction });
   } catch (err) {
-    return jsonError("Failed to update user: " + err.message);
+    return jsonError("Failed to update user.");
   }
 }
 
-export const onRequestPost = handleUserUpdate;
-export const onRequestPut = handleUserUpdate;
 export async function onRequestOptions() { return optionsResponse(); }
