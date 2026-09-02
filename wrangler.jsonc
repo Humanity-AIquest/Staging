@@ -4,5 +4,17 @@
   "assets": {
     "directory": "./dist",
     "not_found_handling": "single-page-application"
-  }
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_id": "6a9e2cb6-2c64-41e7-889a-18a57c95a41b"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "DATASTORE_KV",
+      "id": "6c50f543b67a423eb3d6653b2daa145d"
+    }
+  ]
 }
