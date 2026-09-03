@@ -229,9 +229,9 @@ async function checkGuardrails(message, env) {
   const lowerMsg = message.toLowerCase();
 
   // Check database rules if DB is available
-  if (env.DB) {
+  if (env.humanity_ai_db_staging) {
     try {
-      const rules = await env.DB.prepare(
+      const rules = await env.humanity_ai_db_staging.prepare(
         "SELECT pattern, rule_type, action FROM guardrail_rules WHERE is_active = 1"
       ).all();
 
@@ -327,7 +327,7 @@ export async function onRequestPost(context) {
 
     // ─── ENSURE CONVERSATION TABLES EXIST (self-migrating) ─────────────
     // Without this, every INSERT below throws "no such table" and is lost.
-    if (env.DB) {
+    if (env.humanity_ai_db_staging) {
       try { await ensureConversationSchema(env); } catch (e) { /* schema best-effort */ }
     }
 
@@ -335,14 +335,14 @@ export async function onRequestPost(context) {
     const guardrailResult = await checkGuardrails(userMessage, env);
     if (guardrailResult.blocked) {
       // Log the blocked message if DB available
-      if (env.DB) {
+      if (env.humanity_ai_db_staging) {
         try {
           const convId = newId();
           const user = await getUser(request, env);
-          await env.DB.prepare(
+          await env.humanity_ai_db_staging.prepare(
             "INSERT INTO conversations (id, user_id, user_type, kind, mode, flagged, flag_category) VALUES (?, ?, ?, 'agent', ?, 1, 'blocked')"
           ).bind(convId, user?.id || null, user ? "registered" : "anon", mode || null).run();
-          await env.DB.prepare(
+          await env.humanity_ai_db_staging.prepare(
             "INSERT INTO messages (id, conversation_id, role, content, flagged, flag_reason) VALUES (?, ?, 'user', ?, 1, ?)"
           ).bind(newId(), convId, userMessage, guardrailResult.reason).run();
           await logInteraction(env, {
@@ -363,7 +363,7 @@ export async function onRequestPost(context) {
 
     // ─── IDENTIFY USER ─────────────────────────────────────────────────
     let user = null;
-    if (env.DB) {
+    if (env.humanity_ai_db_staging) {
       try {
         user = await getUser(request, env);
       } catch (e) { /* anonymous is fine */ }
@@ -373,11 +373,11 @@ export async function onRequestPost(context) {
     // Reuse the client-supplied conversation_id so a multi-turn chat stays a
     // single thread; only create a new conversation on the first turn.
     let conversationId = (typeof body.conversation_id === "string" && body.conversation_id) || null;
-    if (env.DB) {
+    if (env.humanity_ai_db_staging) {
       try {
         let isNew = false;
         if (conversationId) {
-          const existing = await env.DB.prepare(
+          const existing = await env.humanity_ai_db_staging.prepare(
             "SELECT id FROM conversations WHERE id = ?"
           ).bind(conversationId).first();
           if (!existing) { conversationId = null; }
@@ -385,13 +385,13 @@ export async function onRequestPost(context) {
         if (!conversationId) {
           conversationId = newId();
           isNew = true;
-          await env.DB.prepare(
+          await env.humanity_ai_db_staging.prepare(
             "INSERT INTO conversations (id, user_id, user_type, kind, mode) VALUES (?, ?, ?, 'agent', ?)"
           ).bind(conversationId, user?.id || null, user ? "registered" : "anon", mode || null).run();
         }
 
         // Log user message
-        await env.DB.prepare(
+        await env.humanity_ai_db_staging.prepare(
           "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, 'user', ?)"
         ).bind(newId(), conversationId, userMessage).run();
 
@@ -455,9 +455,9 @@ export async function onRequestPost(context) {
       .join("\n") || "The HRC Agent received an empty response. Please try again.";
 
     // ─── LOG ASSISTANT RESPONSE ────────────────────────────────────────
-    if (env.DB && conversationId) {
+    if (env.humanity_ai_db_staging && conversationId) {
       try {
-        await env.DB.prepare(
+        await env.humanity_ai_db_staging.prepare(
           "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, 'assistant', ?)"
         ).bind(newId(), conversationId, replyText).run();
       } catch (e) { /* don't fail on logging */ }

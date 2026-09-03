@@ -15,7 +15,7 @@ export async function onRequestPost(context) {
   const { request, env } = context;
   try {
     await ensureMovementSchema(env);
-    try { await env.DB.prepare("ALTER TABLE signatures ADD COLUMN newsletter INTEGER DEFAULT 0").run(); } catch (e) { /* exists */ }
+    try { await env.humanity_ai_db_staging.prepare("ALTER TABLE signatures ADD COLUMN newsletter INTEGER DEFAULT 0").run(); } catch (e) { /* exists */ }
     const { name, email, side, country, newsletter } = await request.json();
 
     if (!name || name.trim().length < 2) return jsonError("Please add your name.");
@@ -24,13 +24,13 @@ export async function onRequestPost(context) {
     const cleanSide = side === "developer" ? "developer" : "human";
 
     // One signature per email — return existing position if already signed.
-    const existing = await env.DB.prepare(
+    const existing = await env.humanity_ai_db_staging.prepare(
       "SELECT id FROM signatures WHERE email = ?"
     ).bind(email.trim().toLowerCase()).first();
 
     if (!existing) {
       const cleanEmail = email.trim().toLowerCase();
-      await env.DB.prepare(
+      await env.humanity_ai_db_staging.prepare(
         "INSERT INTO signatures (id, name, email, side, country, newsletter) VALUES (?,?,?,?,?,?)"
       ).bind(newId(), name.trim(), cleanEmail, cleanSide, country || null, newsletter ? 1 : 0).run();
       try {
@@ -46,9 +46,9 @@ export async function onRequestPost(context) {
       try { await createLead(env, { firstName: name.trim(), lastName: name.trim(), email: cleanEmail, country, source: "Petition signature" }); } catch (e) { /* non-critical */ }
     }
 
-    const count = (await env.DB.prepare("SELECT COUNT(*) AS n FROM signatures").first())?.n || 0;
+    const count = (await env.humanity_ai_db_staging.prepare("SELECT COUNT(*) AS n FROM signatures").first())?.n || 0;
     // Position = rowid order of this email
-    const pos = await env.DB.prepare(
+    const pos = await env.humanity_ai_db_staging.prepare(
       "SELECT COUNT(*) AS n FROM signatures WHERE created_at <= (SELECT created_at FROM signatures WHERE email = ?)"
     ).bind(email.trim().toLowerCase()).first();
 

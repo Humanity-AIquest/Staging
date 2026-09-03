@@ -10,8 +10,8 @@ export async function onRequestGet(context) {
   const { env } = context;
   try {
     await ensureMovementSchema(env);
-    const count = (await env.DB.prepare("SELECT COUNT(*) AS n FROM signatures").first())?.n || 0;
-    const nations = (await env.DB.prepare(
+    const count = (await env.humanity_ai_db_staging.prepare("SELECT COUNT(*) AS n FROM signatures").first())?.n || 0;
+    const nations = (await env.humanity_ai_db_staging.prepare(
       "SELECT COUNT(DISTINCT country) AS n FROM signatures WHERE country IS NOT NULL AND country <> ''"
     ).first())?.n || 0;
     return json({ count, nations });

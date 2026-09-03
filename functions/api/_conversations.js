@@ -8,7 +8,7 @@
  * conversations (Dialogue, Co-Ideator, every mode) were recorded NOWHERE.
  *
  * This module creates them on demand (CREATE TABLE IF NOT EXISTS, idempotent —
- * harmless if they already exist) against the SAME D1 binding (env.DB) the rest
+ * harmless if they already exist) against the SAME D1 binding (env.humanity_ai_db_staging) the rest
  * of the backend uses. Pattern mirrors functions/api/_movement.js.
  *
  * It also creates the `interactions` index: an append-only pointer log so a
@@ -18,10 +18,10 @@
 import { newId } from "./_shared.js";
 
 export async function ensureConversationSchema(env) {
-  if (!env || !env.DB) return;
+  if (!env || !env.humanity_ai_db_staging) return;
 
   // ── Conversations (one row per agent chat thread) ───────────────────────────
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS conversations (
+  await env.humanity_ai_db_staging.prepare(`CREATE TABLE IF NOT EXISTS conversations (
     id TEXT PRIMARY KEY,
     user_id TEXT,
     user_type TEXT DEFAULT 'anon',
@@ -33,7 +33,7 @@ export async function ensureConversationSchema(env) {
   )`).run();
 
   // ── Messages (one row per turn within a conversation) ───────────────────────
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS messages (
+  await env.humanity_ai_db_staging.prepare(`CREATE TABLE IF NOT EXISTS messages (
     id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
     role TEXT NOT NULL,
@@ -44,7 +44,7 @@ export async function ensureConversationSchema(env) {
   )`).run();
 
   // ── Admin notes attached to a conversation ──────────────────────────────────
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS conversation_notes (
+  await env.humanity_ai_db_staging.prepare(`CREATE TABLE IF NOT EXISTS conversation_notes (
     id TEXT PRIMARY KEY,
     conversation_id TEXT NOT NULL,
     admin_id TEXT NOT NULL,
@@ -54,7 +54,7 @@ export async function ensureConversationSchema(env) {
   )`).run();
 
   // ── Admin audit log (written by many endpoints, never created in code) ──────
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS admin_actions (
+  await env.humanity_ai_db_staging.prepare(`CREATE TABLE IF NOT EXISTS admin_actions (
     id TEXT PRIMARY KEY,
     admin_id TEXT,
     action_type TEXT,
@@ -65,7 +65,7 @@ export async function ensureConversationSchema(env) {
   )`).run();
 
   // ── Unified interactions index (append-only pointer log) ────────────────────
-  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS interactions (
+  await env.humanity_ai_db_staging.prepare(`CREATE TABLE IF NOT EXISTS interactions (
     id TEXT PRIMARY KEY,
     kind TEXT NOT NULL,
     user_id TEXT,
@@ -85,7 +85,7 @@ export async function ensureConversationSchema(env) {
     `CREATE INDEX IF NOT EXISTS idx_inter_kind ON interactions(kind)`,
     `CREATE INDEX IF NOT EXISTS idx_inter_created ON interactions(created_at)`,
   ]) {
-    try { await env.DB.prepare(stmt).run(); } catch (e) { /* index already exists */ }
+    try { await env.humanity_ai_db_staging.prepare(stmt).run(); } catch (e) { /* index already exists */ }
   }
 }
 
@@ -95,9 +95,9 @@ export async function ensureConversationSchema(env) {
  * primary write (the chat reply, the vote, the signature).
  */
 export async function logInteraction(env, { kind, user_id, participant, ref_type, ref_id, summary }) {
-  if (!env || !env.DB) return;
+  if (!env || !env.humanity_ai_db_staging) return;
   try {
-    await env.DB.prepare(
+    await env.humanity_ai_db_staging.prepare(
       `INSERT INTO interactions (id, kind, user_id, participant, ref_type, ref_id, summary)
        VALUES (?, ?, ?, ?, ?, ?, ?)`
     ).bind(
