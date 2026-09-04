@@ -16,9 +16,7 @@
       "binding": "DATASTORE_KV",
       "id": "6c50f543b67a423eb3d6653b2daa145d"
     }
-  ]
-}
-{
+  ],
   "observability": {
     "enabled": false,
     "head_sampling_rate": 1,
