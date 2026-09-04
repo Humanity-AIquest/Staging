@@ -10,11 +10,11 @@ import { ensureConversationSchema, logInteraction } from "./_conversations.js";
 async function ensureIdeasSchema(env) {
   const cols = ['ledger_hash TEXT', 'prev_hash TEXT', 'clause_refs TEXT', 'conversation_id TEXT', 'tags TEXT'];
   for (const col of cols) {
-    try { await env.humanity_ai_db_staging.prepare(`ALTER TABLE ideas ADD COLUMN ${col}`).run(); } catch (e) { /* already exists */ }
+    try { await env.DB.prepare(`ALTER TABLE ideas ADD COLUMN ${col}`).run(); } catch (e) { /* already exists */ }
   }
   // Ensure idea_status_log table exists
   try {
-    await env.humanity_ai_db_staging.prepare(`CREATE TABLE IF NOT EXISTS idea_status_log (
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS idea_status_log (
       id TEXT PRIMARY KEY,
       idea_id TEXT NOT NULL,
       old_status TEXT,
@@ -65,7 +65,7 @@ export async function onRequestPost(context) {
     // Get previous hash for chain integrity
     let prevHash = null;
     try {
-      const lastIdea = await env.humanity_ai_db_staging.prepare(
+      const lastIdea = await env.DB.prepare(
         "SELECT ledger_hash FROM ideas ORDER BY created_at DESC LIMIT 1"
       ).first();
       prevHash = lastIdea?.ledger_hash || null;
@@ -82,7 +82,7 @@ export async function onRequestPost(context) {
 
     const ideaId = newId();
 
-    await env.humanity_ai_db_staging.prepare(
+    await env.DB.prepare(
       `INSERT INTO ideas (id, user_id, conversation_id, title, content, clause_refs, status, ledger_hash, prev_hash)
        VALUES (?, ?, ?, ?, ?, ?, 'submitted', ?, ?)`
     ).bind(
@@ -94,7 +94,7 @@ export async function onRequestPost(context) {
 
     // Log initial status
     try {
-      await env.humanity_ai_db_staging.prepare(
+      await env.DB.prepare(
         `INSERT INTO idea_status_log (id, idea_id, old_status, new_status, comment, visible_to_user)
          VALUES (?, ?, NULL, 'submitted', 'Your idea has been received. Thank you for contributing to the HRC.', 1)`
       ).bind(newId(), ideaId).run();
@@ -136,7 +136,7 @@ export async function onRequestGet(context) {
       return jsonError("Please log in to view your ideas.");
     }
 
-    const ideas = await env.humanity_ai_db_staging.prepare(
+    const ideas = await env.DB.prepare(
       `SELECT id, title, content, clause_refs, status, ledger_hash, created_at
        FROM ideas
        WHERE user_id = ?
@@ -149,7 +149,7 @@ export async function onRequestGet(context) {
     for (const idea of ideas.results || []) {
       let history = { results: [] };
       try {
-        history = await env.humanity_ai_db_staging.prepare(
+        history = await env.DB.prepare(
           `SELECT new_status, comment, visible_to_user, created_at
            FROM idea_status_log
            WHERE idea_id = ? AND visible_to_user = 1

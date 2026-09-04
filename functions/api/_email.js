@@ -17,14 +17,14 @@
 
 export async function ensureEmailSchema(env) {
   if (!env?.DB) return;
-  await env.humanity_ai_db_staging.prepare(`CREATE TABLE IF NOT EXISTS email_templates (
+  await env.DB.prepare(`CREATE TABLE IF NOT EXISTS email_templates (
     key TEXT PRIMARY KEY,
     subject TEXT NOT NULL,
     html TEXT NOT NULL,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`).run();
   // Seed defaults once.
-  const n = await env.humanity_ai_db_staging.prepare("SELECT COUNT(*) AS n FROM email_templates").first();
+  const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM email_templates").first();
   if ((n?.n || 0) === 0) {
     const seed = [
       ["welcome", "Welcome to Humanity-AI",
@@ -33,7 +33,7 @@ export async function ensureEmailSchema(env) {
         "<p>Hi {{name}},</p><p>Thank you for signing the Humanity-AI petition. Your voice is now part of the movement.</p><p>— The Humanity-AI team</p>"],
     ];
     for (const [key, subject, html] of seed) {
-      try { await env.humanity_ai_db_staging.prepare("INSERT INTO email_templates (key, subject, html) VALUES (?,?,?)").bind(key, subject, html).run(); } catch (e) { /* exists */ }
+      try { await env.DB.prepare("INSERT INTO email_templates (key, subject, html) VALUES (?,?,?)").bind(key, subject, html).run(); } catch (e) { /* exists */ }
     }
   }
 }
@@ -73,7 +73,7 @@ export async function sendEmail(env, { to, toName, subject, html }) {
 export async function sendTemplate(env, key, { to, toName, vars }) {
   try {
     await ensureEmailSchema(env);
-    const t = await env.humanity_ai_db_staging.prepare("SELECT subject, html FROM email_templates WHERE key = ?").bind(key).first();
+    const t = await env.DB.prepare("SELECT subject, html FROM email_templates WHERE key = ?").bind(key).first();
     if (!t) return { skipped: true, reason: "template missing" };
     return await sendEmail(env, { to, toName, subject: fill(t.subject, vars), html: fill(t.html, vars) });
   } catch (e) {

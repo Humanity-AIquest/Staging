@@ -57,6 +57,34 @@ export function generateToken() {
   return Array.from(bytes).map(b => b.toString(16).padStart(2, "0")).join("");
 }
 
+// ─── Self-Migrating Auth Schema ──────────────────────────────────────────────
+// Idempotent CREATE TABLE IF NOT EXISTS, each statement in its own try/catch,
+// same pattern as ensureMovementSchema/ensureEmailSchema/etc.
+export async function ensureAuthSchema(env) {
+  if (!env || !env.DB) return;
+  try {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      display_name TEXT,
+      role TEXT DEFAULT 'user',
+      acl_level INTEGER DEFAULT 0,
+      status TEXT DEFAULT 'active',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`).run();
+  } catch (e) { /* already exists */ }
+  try {
+    await env.DB.prepare(`CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      token TEXT UNIQUE NOT NULL,
+      expires_at DATETIME NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )`).run();
+  } catch (e) { /* already exists */ }
+}
+
 // ─── Auth Middleware: Extract user from session cookie or header ──────────────
 export async function getUser(request, env) {
   // Check for session token in cookie or Authorization header
@@ -78,7 +106,7 @@ export async function getUser(request, env) {
   if (!token) return null;
 
   // Look up session in D1
-  const session = await env.humanity_ai_db_staging.prepare(
+  const session = await env.DB.prepare(
     "SELECT s.user_id, s.expires_at, u.email, u.display_name, u.role, u.acl_level, u.status FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.token = ? AND s.expires_at > datetime('now')"
   ).bind(token).first();
 

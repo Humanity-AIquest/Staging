@@ -12,13 +12,13 @@ export async function onRequestGet(context) {
     const pageKey = url.searchParams.get("page");
     const sectionKey = url.searchParams.get("section");
 
-    if (!env.humanity_ai_db_staging) {
+    if (!env.DB) {
       return jsonError("Content service unavailable.");
     }
 
     // Get specific section
     if (pageKey && sectionKey) {
-      const content = await env.humanity_ai_db_staging.prepare(
+      const content = await env.DB.prepare(
         "SELECT page_key, section_key, content_type, content, updated_at FROM site_content WHERE page_key = ? AND section_key = ?"
       ).bind(pageKey, sectionKey).first();
 
@@ -27,7 +27,7 @@ export async function onRequestGet(context) {
 
     // Get all content for a page
     if (pageKey) {
-      const result = await env.humanity_ai_db_staging.prepare(
+      const result = await env.DB.prepare(
         "SELECT page_key, section_key, content_type, content, updated_at FROM site_content WHERE page_key = ? ORDER BY section_key"
       ).bind(pageKey).all();
 
@@ -35,7 +35,7 @@ export async function onRequestGet(context) {
     }
 
     // Get all content (for full-site render)
-    const result = await env.humanity_ai_db_staging.prepare(
+    const result = await env.DB.prepare(
       "SELECT page_key, section_key, content_type, content, updated_at FROM site_content ORDER BY page_key, section_key"
     ).all();
 
