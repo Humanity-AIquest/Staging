@@ -168,6 +168,20 @@ Open `src/App.jsx`, find the `HRC_CORE`, `HRC_GOV`, or `HRC_OPS` arrays at the t
 
 ---
 
+## Staging environment
+
+There is a second, separate deployment for testing: repo `Humanity-AIquest/Staging` (its own
+GitHub repo, not a branch of this one), live at `staging.humanity-ai-info.workers.dev`. It runs
+against its own D1 database (`humanity-ai-db-staging`) so testing never touches production data —
+**including CMS content**, which lives in the database, not in code. Editing content via the live
+site's admin CMS will never appear on staging (and vice versa) unless the `site_content` table is
+deliberately copied over.
+
+Unlike the Web repo, Staging is a genuine Cloudflare **Worker**, not a Pages project — see
+`CLAUDE.md`'s "Deployment environments" section for the architectural differences (most
+importantly: adding a new file under `functions/api/` requires a matching update to `src/index.js`,
+this repo's manual router).
+
 ## Troubleshooting
 
 **Agent returns "I couldn't reach the constitution layer"**

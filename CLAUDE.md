@@ -63,7 +63,10 @@ destination.
 - **Styling**: CSS-in-JS via a `<style>` tag / CSS custom properties (`var(--aurora)`, etc.).
   A Tailwind config exists but the app is CSS-vars-first — no Tailwind classes in the UI.
 - **Fonts**: Fraunces (display serif), Manrope (body sans-serif) via Google Fonts.
-- **Backend**: Cloudflare **Pages Functions** under `functions/api/**` (file-based routing).
+- **Backend**: Cloudflare **Pages Functions** under `functions/api/**` (file-based routing) — true
+  for this (Web) repo. **The Staging repo is a different Cloudflare product (a Worker) and routes
+  these same files manually — see "Deployment environments" below before assuming Pages semantics
+  apply everywhere.**
 - **Database**: Cloudflare **D1** (SQLite), bound as `env.DB`. Schema self-migrates on first use.
 - **AI**: Anthropic Messages API, called **server-side only** from `functions/api/chat.js`.
   Model constant `claude-sonnet-4-6`, `max_tokens: 2000`. The API key never reaches the browser.
@@ -99,8 +102,11 @@ humanity-ai-quest/
   `CREATE TABLE IF NOT EXISTS` and columns via idempotent `ALTER TABLE … ADD COLUMN` in try/catch.
   Canonical DDL modules: `_movement.js` and `_conversations.js`. When you add a table/column, do it
   the same way (idempotent, on first request) **and update `SCHEMA.md`**.
-- **`users` and `sessions` are provisioned externally** (wrangler/D1 console), not created in code.
-  Don't assume they self-migrate — if you rebuild the DB from scratch, create them first.
+- **`users` and `sessions` self-migrate via `ensureAuthSchema(env)`** in `_shared.js` (called at the
+  top of `auth/login.js`, `auth/signup.js`, `auth/me.js`), same idempotent
+  `CREATE TABLE IF NOT EXISTS` pattern as `_movement.js`/`_email.js`. (This function was missing
+  entirely until 2026-09 — a real bug that silently broke all three auth endpoints; if you see it
+  missing again, check whether an old file version got reintroduced.)
 - **Errors return HTTP 200** with an `{ error }` body by design, so the frontend always parses.
 - **No enforced foreign keys.** Relationships are by convention (see the map in SCHEMA.md).
   `interactions` and `admin_actions` are polymorphic pointer/audit logs.
@@ -168,12 +174,40 @@ npm run dev       # Dev server at localhost:5173
 npm run build     # Production build to dist/
 ```
 
-## Deployment
-- Push to `main` auto-deploys via Cloudflare Pages. Build command `npm run build`, output dir `dist`.
-- Secrets (Cloudflare dashboard, encrypted env vars): `ANTHROPIC_API_KEY` (required for the agent);
-  `ZEPTOMAIL_TOKEN` / `EMAIL_FROM` / `EMAIL_FROM_NAME` (email); `ZOHO_*` (CRM). Missing integration
-  secrets fail safe — the app keeps working, those features just no-op.
-- `DB` is the D1 binding.
+## Deployment environments — two separate repos, two different architectures
+
+**This project deploys from TWO separate GitHub repos, not two branches of one repo.**
+Uploading/pushing to the wrong one has caused real outages — read this before touching either.
+
+| | **Web** (production) | **Staging** |
+|---|---|---|
+| Repo | `Humanity-AIquest/Web` | `Humanity-AIquest/Staging` (separate repo!) |
+| Branch | `main` | `main` |
+| URL | https://humanity-ai.quest | https://staging.humanity-ai-info.workers.dev |
+| Cloudflare product | Classic **Pages** project | Genuine **Worker** (despite living under the "Workers & Pages" dashboard section — confirmed by the `.workers.dev` URL pattern and `wrangler pages deploy` reporting "Project not found" when tried) |
+| `functions/api/*.js` routing | **Automatic** — Pages auto-generates the router from the file tree | **Manual** — `src/index.js` is a hand-written router that imports every handler and dispatches by path. **If you add/rename/move a file under `functions/api/`, you must also update `src/index.js` on Staging**, or the new route silently 404s. Web needs no such update. |
+| Config file | none committed (D1 binding set via Cloudflare dashboard) | `wrangler.jsonc` (committed) — `main`, `assets` block, `d1_databases`, `kv_namespaces` |
+| Deploy command (Cloudflare dashboard → Settings → Build configuration) | n/a (Pages auto-deploys after build) | `npx wrangler deploy` — **must** be this, not `wrangler deploy` alone (fails: "Missing entry-point" before `main`/`assets` existed) and not `wrangler pages deploy` (fails: "Project not found" — this is not a Pages project) |
+| D1 binding name in code | `env.DB` | `env.DB` (same name deliberately — code is meant to be near-identical between repos) pointing to the separate `humanity-ai-db-staging` database |
+
+**Recurring failure mode to watch for:** code has repeatedly gotten cross-contaminated between
+these repos — e.g. a local-dev-only `wrangler.toml` from the Web repo's gitignored file, or a
+one-off binding rename, ending up committed to Staging via a manual "Add files via upload." If a
+function suddenly throws `Cannot read properties of undefined (reading 'prepare')`, grep the repo
+you're in for a binding name that doesn't match its own `wrangler.jsonc`/dashboard config before
+assuming it's a code bug.
+
+**Staging's `CLOUDFLARE_API_TOKEN`** (used by the build to run `wrangler deploy`, set as an
+environment variable on the Staging Cloudflare project) **expires 2027-09-01.** Cloudflare tokens
+can't be edited once expired — the fix is "roll" (regenerate) it from
+dash.cloudflare.com/profile/api-tokens *before* it expires, not after. If Staging deploys start
+failing with `Authentication error [code: 10000]`, this is the first thing to check.
+
+- Push to `main` on **Web** auto-deploys via Cloudflare Pages. Build command `npm run build`, output dir `dist`.
+- Secrets (Cloudflare dashboard, encrypted env vars, set separately per project): `ANTHROPIC_API_KEY`
+  (required for the agent); `ZEPTOMAIL_TOKEN` / `EMAIL_FROM` / `EMAIL_FROM_NAME` (email); `ZOHO_*`
+  (CRM). Missing integration secrets fail safe — the app keeps working, those features just no-op.
+- `DB` is the D1 binding on both Web and Staging.
 
 ## Important notes
 - The HRC Agent calls `/api/chat`, **not** Anthropic directly — the proxy adds the API key server-side.
