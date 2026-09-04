@@ -8,6 +8,7 @@
   "d1_databases": [
     {
       "binding": "DB",
+      "database_name": "humanity-ai-db-staging",
       "database_id": "6a9e2cb6-2c64-41e7-889a-18a57c95a41b"
     }
   ],
