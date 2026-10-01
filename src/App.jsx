@@ -4,7 +4,7 @@ import {
   X, Send, ArrowRight, Globe, Shield, Feather, Layers,
   Eye, Lock, Heart, Compass, Menu, Loader2,
   MessageCircle, Trees, Star, Mic, MicOff, Volume2, VolumeX, Square,
-  LogIn, UserPlus, User, LogOut, Lightbulb, CheckCircle, Settings
+  LogIn, UserPlus, User, LogOut, Lightbulb, CheckCircle, Settings, PhoneOff
 } from 'lucide-react';
 import AdminDashboard from './AdminDashboard';
 import { useTTS, ListenButton, getLS, setLS, TTS_SPEEDS } from './useTTS';
@@ -2649,7 +2649,7 @@ const AGENT_DEFAULT_GREETING = "I am Uto-Pi (Pi for short), guardian of the Cove
 
 const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
   const greeting = useCmsField('agent', 'greeting', AGENT_DEFAULT_GREETING);
-  const inputPh = useCmsField('agent', 'input_ph', 'Ask the constitution. Share your idea.');
+  const inputPh = useCmsField('agent', 'input_ph', 'Ask Uto-Pi. Share your idea.');
   const [messages, setMessages] = useState([{ role: 'assistant', content: greeting }]);
   // Keep the greeting in sync with CMS until the visitor starts chatting.
   useEffect(() => {
@@ -2661,6 +2661,7 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
   const [conversationId, setConversationId] = useState(null);
   const [mode, setMode] = useState('dialogue');
   const [showSpeedMenu, setShowSpeedMenu] = useState(false);
+  const [callSecs, setCallSecs] = useState(0); // call timer: starts when the panel opens
   const [activeSectionIdx, setActiveSectionIdx] = useState(-1);
   const tts = useTTS();
 
@@ -2674,6 +2675,12 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
     setLS('autoVoice', next);
     if (!next) tts.stop();
   };
+
+  useEffect(() => {
+    if (!open) { setCallSecs(0); return; }
+    const t = setInterval(() => setCallSecs(s => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [open]);
 
   const [showIdeaForm, setShowIdeaForm] = useState(false);
   const [ideaTitle, setIdeaTitle] = useState('');
@@ -2793,7 +2800,7 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
     } catch (err) {
       setMessages([...newMessages, {
         role: 'assistant',
-        content: "I couldn't reach the constitution layer just now. Try again in a moment — your question matters."
+        content: "The line dropped. Try again in a moment. Your question matters."
       }]);
     } finally { setLoading(false); }
   };
@@ -2840,9 +2847,28 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-end md:justify-end p-0 md:p-6"
       style={{ background: 'rgba(7, 16, 31, 0.6)', backdropFilter: 'blur(8px)' }}
       onClick={onClose}>
-      <div className="w-full md:w-[520px] h-[90vh] md:h-[680px] rounded-t-3xl md:rounded-3xl flex flex-col grain animate-fade-up"
+      <div className="pc-panel w-full md:w-[520px] h-[90vh] md:h-[680px] rounded-t-3xl md:rounded-3xl flex flex-col grain animate-fade-up"
         style={{ background: 'var(--void-2)', border: '1px solid var(--line-2)' }}
         onClick={e => e.stopPropagation()}>
+
+        <style>{`
+          .pc-panel { background: radial-gradient(ellipse 80% 40% at 50% 0%, rgba(40,160,140,.22), transparent 70%), radial-gradient(ellipse 60% 30% at 100% 100%, rgba(255,214,10,.08), transparent 70%), #060d1a !important; border: 1px solid rgba(255,214,10,.35) !important; box-shadow: 0 30px 90px rgba(0,0,0,.6), 0 0 60px rgba(123,224,195,.08); }
+          .pc-avatar { position: relative; width: 52px; height: 52px; flex-shrink: 0; }
+          .pc-avatar .face { position: absolute; inset: 0; border-radius: 50%; overflow: hidden; background: #03060d; border: 1px solid rgba(255,214,10,.6); }
+          .pc-avatar .face img { position: absolute; width: 150%; left: -25%; top: -14%; mix-blend-mode: screen; }
+          .pc-avatar .ring { position: absolute; inset: -5px; border-radius: 50%; border: 1px solid rgba(123,224,195,.55); opacity: 0; }
+          .pc-avatar.live .ring { opacity: 1; animation: pc-ring 1.8s ease-out infinite; }
+          .pc-avatar.live .ring.b { animation-delay: .9s; }
+          .pc-wave { display: flex; align-items: center; gap: 3px; height: 22px; }
+          .pc-wave i { display: block; width: 3px; height: 4px; border-radius: 2px; background: #7BE0C3; opacity: .35; }
+          .pc-wave.on i { opacity: 1; animation: pc-bar 0.9s ease-in-out infinite; }
+          .pc-wave.on i:nth-child(2n) { animation-delay: .15s; } .pc-wave.on i:nth-child(3n) { animation-delay: .3s; } .pc-wave.on i:nth-child(5n) { animation-delay: .45s; }
+          .pc-mono { font-family: 'IBM Plex Mono', ui-monospace, monospace; letter-spacing: .14em; text-transform: uppercase; }
+          .pc-bubble { background: rgba(255,214,10,.05) !important; border: 1px solid rgba(255,214,10,.22) !important; }
+          @keyframes pc-ring { 0% { transform: scale(.9); opacity: .8; } 100% { transform: scale(1.35); opacity: 0; } }
+          @keyframes pc-bar { 0%,100% { height: 4px; } 50% { height: 20px; } }
+          @media (prefers-reduced-motion: reduce) { .pc-avatar .ring, .pc-wave i { animation: none !important; } }
+        `}</style>
 
         {/* ── Row 1: Title + Controls (no mode pills, no lightbulb) ── */}
         <div style={{
@@ -2851,17 +2877,22 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
           borderBottom: '1px solid var(--line)',
         }}>
           {/* Orb + title */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-            <div className="animate-glow-breathe" style={{
-              width: 32, height: 32, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-              background: 'radial-gradient(circle, var(--aurora) 0%, var(--aurora-deep) 70%)',
-            }}>
-              <Sparkles size={14} className="text-void" />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1, minWidth: 0 }}>
+            <div className={'pc-avatar ' + ((loading || listening || tts.speakingId) ? 'live' : '')}>
+              <span className="ring" /><span className="ring b" />
+              <div className="face"><img src="/pi/pi-face.webp" alt="Uto-Pi" /></div>
             </div>
-            <div>
-              <div className="font-display" style={{ fontSize: 15, lineHeight: 1.2 }}>Uto-Pi</div>
-              <div style={{ fontSize: 10, color: 'var(--dust)', lineHeight: 1 }}>Pi for short · Guardian of the Covenant</div>
+            <div style={{ minWidth: 0 }}>
+              <div className="font-display" style={{ fontSize: 20, lineHeight: 1.1 }}>Uto-Pi</div>
+              <div className="pc-mono" style={{ fontSize: 9, color: '#7BE0C3', marginTop: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#7BE0C3', boxShadow: '0 0 8px #7BE0C3' }} />
+                On call · {String(Math.floor(callSecs / 60)).padStart(2, '0')}:{String(callSecs % 60).padStart(2, '0')}
+              </div>
+              <div className="pc-mono" style={{ fontSize: 8, color: 'var(--dust)', marginTop: 3 }}>Guardian of the Covenant · SI, never human</div>
             </div>
+          </div>
+          <div className={'pc-wave ' + ((loading || listening || tts.speakingId) ? 'on' : '')} aria-hidden="true">
+            {Array.from({ length: 9 }).map((_, i) => <i key={i} />)}
           </div>
 
           {/* Controls: volume toggle + close only */}
@@ -2876,7 +2907,7 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
               padding: 6, borderRadius: '50%', background: 'transparent', border: 'none', cursor: 'pointer',
               display: 'flex', alignItems: 'center', justifyContent: 'center',
             }}>
-              <X size={16} color="var(--bone-dim)" />
+              <PhoneOff size={15} color="#ff7a7a" />
             </button>
           </div>
         </div>
@@ -3038,13 +3069,10 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
                 <div key={i} ref={el => { msgRefs.current[i] = el; }}
                   className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                   <div className={`max-w-[88%] px-4 py-3 rounded-2xl text-sm leading-relaxed whitespace-pre-wrap ${
-                    m.role === 'user' ? 'bg-bone text-void rounded-br-sm' : 'rounded-bl-sm'
+                    m.role === 'user' ? 'bg-bone text-void rounded-br-sm' : 'pc-bubble rounded-bl-sm'
                   }`}
-                    style={m.role === 'assistant' ? {
-                      background: 'rgba(91, 233, 221, 0.06)',
-                      border: '1px solid rgba(91, 233, 221, 0.15)',
-                      color: 'var(--bone)'
-                    } : {}}>
+                    style={m.role === 'assistant' ? { color: 'var(--bone)' } : {}}>
+                    {m.role === 'assistant' && <div className="pc-mono" style={{ fontSize: 8, color: 'var(--gold)', marginBottom: 6 }}>Uto-Pi</div>}
                     {m.content}
                     {m.role === 'assistant' && (
                       <button onClick={() => tts.speak(`msg-${i}`, m.content)} style={{
@@ -3066,9 +3094,9 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
               {loading && (
                 <div className="flex justify-start">
                   <div className="px-4 py-3 rounded-2xl rounded-bl-sm flex items-center gap-2"
-                    style={{ background: 'rgba(91, 233, 221, 0.06)', border: '1px solid rgba(91, 233, 221, 0.15)' }}>
+                    style={{ background: 'rgba(255,214,10,.05)', border: '1px solid rgba(255,214,10,.22)' }}>
                     <Loader2 size={14} className="animate-spin text-aurora" />
-                    <span className="text-sm text-bone-dim">Consulting the constitution...</span>
+                    <span className="text-sm text-bone-dim">Auditing against the 12 pledges…</span>
                   </div>
                 </div>
               )}
@@ -3076,7 +3104,7 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
 
             {messages.length <= 1 && !loading && (
               <div className="px-5 pb-3 flex flex-wrap gap-2">
-                {["What is the HRC in one paragraph?", "How do I claim my agent?", "Help me develop an idea", "Explain Clause I.32"].map((q, i) => (
+                {["What is the kill switch?", "Show me pledge I.07", "How do I amend a pledge?", "Help me pitch a quest"].map((q, i) => (
                   <button key={i} onClick={() => setInput(q)}
                     className="text-xs px-3 py-1.5 rounded-full border transition-all"
                     style={{ borderColor: 'var(--line-2)', color: 'var(--bone-dim)' }}>
@@ -3165,18 +3193,18 @@ const HRCAgent = ({ open, onClose, seed, clearSeed, auth, onOpenAuth }) => {
             <span>
               {auth?.user
                 ? auth.user.display_name
-                : <><span>Anonymous · </span><button onClick={onOpenAuth} style={{ color: 'var(--aurora)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 10 }}>Sign in</button></>
+                : <><span>Anonymous caller · </span><button onClick={onOpenAuth} style={{ color: 'var(--aurora)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 10 }}>Sign in</button></>
               }
             </span>
             {/* Contextual status badge */}
             {(() => {
               const [label, color, bg, border] = loading
-                ? ['Thinking', 'var(--gold)', 'rgba(232,177,79,0.10)', 'rgba(232,177,79,0.25)']
+                ? ['Auditing', 'var(--gold)', 'rgba(232,177,79,0.10)', 'rgba(232,177,79,0.25)']
                 : listening
                 ? ['Listening', '#a8d8ff', 'rgba(100,180,255,0.10)', 'rgba(100,180,255,0.25)']
                 : tts.speakingId
-                ? ['Reading', 'var(--aurora)', 'rgba(91,233,221,0.10)', 'rgba(91,233,221,0.25)']
-                : ['Idle', 'var(--dust)', 'transparent', 'rgba(232,234,222,0.06)'];
+                ? ['Speaking', 'var(--aurora)', 'rgba(91,233,221,0.10)', 'rgba(91,233,221,0.25)']
+                : ['On call', 'var(--dust)', 'transparent', 'rgba(232,234,222,0.06)'];
               return (
                 <span style={{
                   display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 600,
