@@ -1175,8 +1175,8 @@ const CMS_FIELDS = [
   { group: 'Forms', page: 'events', key: 'rsvp_name_ph', label: 'Events · RSVP name placeholder', default: 'Your name' },
   { group: 'Forms', page: 'events', key: 'rsvp_email_ph', label: 'Events · RSVP email placeholder', default: 'you@email.com' },
   // Agent & dialog
-  { group: 'Agent & dialog', page: 'agent', key: 'greeting', label: 'HRC Agent · greeting message', default: "I am the HRC Agent. I carry humanity's constitution for AI.\n\nAsk me anything about the 52 clauses, or share an idea you'd like to develop and I'll help refine it through the lens of the constitution. Every conversation is yours alone." },
-  { group: 'Agent & dialog', page: 'agent', key: 'input_ph', label: 'HRC Agent · input placeholder', default: 'Ask the constitution. Share your idea.' },
+  { group: 'Agent & dialog', page: 'agent', key: 'greeting', label: 'Uto-Pi · greeting message', default: "I am Uto-Pi (Pi for short), guardian of the Covenant: Humanity's Rights Constitution. I am an SI agent, never a human.\n\nAsk me anything about the 12 pledges, or share an idea you'd like to develop and I'll help refine it through the lens of the constitution. Every conversation is yours alone." },
+  { group: 'Agent & dialog', page: 'agent', key: 'input_ph', label: 'Uto-Pi · input placeholder', default: 'Ask the constitution. Share your idea.' },
 ];
 const CMS_GROUPS = ['Forms', 'Agent & dialog', 'Buttons & CTAs', 'Banners & footer'];
 
@@ -2623,7 +2623,7 @@ const InteractionsTab = ({ auth, level }) => {
     <div>
       {/* Primary sub-nav: HRC Agent | IP Dev Agent */}
       <div style={{ display: 'flex', gap: 6, marginBottom: 18, flexWrap: 'wrap' }}>
-        <SegBtn active={view === 'hrc'}   onClick={() => setView('hrc')}   icon={MessageCircle} label="HRC Agent" />
+        <SegBtn active={view === 'hrc'}   onClick={() => setView('hrc')}   icon={MessageCircle} label="Uto-Pi" />
         <SegBtn active={view === 'ideas'} onClick={() => setView('ideas')} icon={Lightbulb}     label="IP Dev Agent" />
       </div>
 

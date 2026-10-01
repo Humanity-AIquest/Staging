@@ -5,6 +5,7 @@
  * POST — Alias for PUT (same upsert, for frontend convenience)
  */
 import { json, jsonError, optionsResponse, getUser, requireACL, newId } from "../_shared.js";
+import { seedCmsFromArchive } from "../_cms.js";
 
 // Auto-migrate site_content tables
 async function ensureSchema(env) {
@@ -27,6 +28,9 @@ async function ensureSchema(env) {
     updated_by TEXT,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   )`).run().catch(() => {});
+
+  // Import the archived live-site copy once per database (see _cms.js).
+  await seedCmsFromArchive(env).catch(() => {});
 }
 
 // GET /api/admin/content?page_key=home&section_key=hero

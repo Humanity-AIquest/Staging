@@ -10,8 +10,10 @@
 import { newId } from "./_shared.js";
 
 let _seeded = false;
+let _schemaReady = false;      // schema + migrations + seeds finished once in this isolate
 
 export async function ensureMovementSchema(env) {
+  if (_schemaReady) return;
   // ── Petition ───────────────────────────────────────────────────────────────
   await env.DB.prepare(`CREATE TABLE IF NOT EXISTS signatures (
     id TEXT PRIMARY KEY,
@@ -112,6 +114,18 @@ export async function ensureMovementSchema(env) {
     "ALTER TABLE surveys ADD COLUMN sort_order INTEGER DEFAULT 0",
     "ALTER TABLE survey_statements ADD COLUMN type TEXT DEFAULT 'vote'",
     "ALTER TABLE survey_statements ADD COLUMN sort_order INTEGER DEFAULT 0",
+    // Quest campaign model (V3): type, funding goal/progress, deadline, attribution, pledges, tranches.
+    // Team count is not stored: it is the number of quest_pitches registered for the quest.
+    "ALTER TABLE quests ADD COLUMN type TEXT DEFAULT 'prize'",
+    "ALTER TABLE quests ADD COLUMN goal REAL",
+    "ALTER TABLE quests ADD COLUMN raised REAL DEFAULT 0",
+    "ALTER TABLE quests ADD COLUMN currency TEXT DEFAULT 'USD'",
+    "ALTER TABLE quests ADD COLUMN deadline TEXT",
+    "ALTER TABLE quests ADD COLUMN backers INTEGER DEFAULT 0",
+    "ALTER TABLE quests ADD COLUMN sponsor TEXT",
+    "ALTER TABLE quests ADD COLUMN pledges TEXT",
+    "ALTER TABLE quests ADD COLUMN tranches TEXT",
+    "ALTER TABLE quests ADD COLUMN is_demo INTEGER DEFAULT 1",
   ]) {
     try { await env.DB.prepare(sql).run(); } catch (e) { /* column already exists */ }
   }
@@ -124,6 +138,133 @@ export async function ensureMovementSchema(env) {
     await seedPetitionStance(env);
     _petitionSeeded = true;
   }
+  try { await seedQuestModel(env); } catch (e) { console.error("seedQuestModel failed:", e && e.message); }
+  _schemaReady = true;
+}
+
+// ── Quest campaign model ─────────────────────────────────────────────────────
+// A quest is one of three campaign types (the V3 Quest OS):
+//   prize   — a pre-funded prize pool; teams compete, the winner takes the pool
+//   startup — pre-crowdfunded startup funding; winners build the PoC, then the solution
+//   crowd   — a regular crowdfunding campaign with Humanity-AI rules
+// Money fields are DEMO figures until live payments are approved (is_demo = 1).
+export const QUEST_TYPES = ["prize", "startup", "crowd"];
+
+// Suggested milestone-tranche plans per type (a default; editable per quest in the admin).
+export const DEFAULT_TRANCHES = {
+  prize:   [{ name: "Award", pct: 50 }, { name: "Proof of concept", pct: 30 }, { name: "Solution", pct: 20 }],
+  startup: [{ name: "Award", pct: 40 }, { name: "Proof of concept", pct: 30 }, { name: "Solution milestones", pct: 30 }],
+  crowd:   [{ name: "Goal met", pct: 40 }, { name: "Milestone 1", pct: 30 }, { name: "Delivery", pct: 30 }],
+};
+
+// Columns returned for a quest, plus the live team count (registered pitches).
+export const QUEST_SELECT = `q.id, q.title, q.bounty, q.status, q.summary, q.tags, q.type, q.goal, q.raised,
+  q.currency, q.deadline, q.backers, q.sponsor, q.pledges, q.tranches, q.is_demo, q.created_at,
+  (SELECT COUNT(*) FROM quest_pitches p WHERE p.quest_id = q.id) AS teams`;
+
+const parseArr = (t) => { try { const a = JSON.parse(t); return Array.isArray(a) ? a : []; } catch { return []; } };
+
+// DB row -> API shape (JSON columns parsed, sane defaults for rows created before the model existed).
+export function shapeQuest(q) {
+  return {
+    ...q,
+    tags: parseArr(q.tags),
+    pledges: parseArr(q.pledges),
+    tranches: parseArr(q.tranches),
+    type: QUEST_TYPES.includes(q.type) ? q.type : "prize",
+    currency: q.currency || "USD",
+    goal: q.goal == null ? null : Number(q.goal),
+    raised: Number(q.raised || 0),
+    backers: Number(q.backers || 0),
+    teams: Number(q.teams || 0),
+    is_demo: q.is_demo === 0 ? 0 : 1,
+  };
+}
+
+// Validate + normalise quest fields coming from the admin / create endpoints.
+// Returns { fields } (column -> value, only for keys present) or { error }.
+export function cleanQuestInput(b) {
+  const out = {};
+  const has = (k) => Object.prototype.hasOwnProperty.call(b, k);
+  const list = (x) => (Array.isArray(x) ? x : String(x == null ? "" : x).split(","));
+  const text = (k, max) => { if (has(k)) out[k] = b[k] == null ? null : String(b[k]).trim().slice(0, max); };
+
+  if (has("type")) {
+    const t = String(b.type || "").toLowerCase();
+    if (!QUEST_TYPES.includes(t)) return { error: "type must be prize, startup or crowd." };
+    out.type = t;
+  }
+  for (const k of ["goal", "raised"]) {
+    if (!has(k)) continue;
+    if (b[k] === "" || b[k] === null) { out[k] = k === "raised" ? 0 : null; continue; }
+    const n = Number(b[k]);
+    if (!Number.isFinite(n) || n < 0) return { error: k + " must be a non-negative number." };
+    out[k] = n;
+  }
+  if (has("backers")) { const n = parseInt(b.backers, 10); out.backers = Number.isFinite(n) && n >= 0 ? n : 0; }
+  if (has("currency")) out.currency = String(b.currency || "USD").toUpperCase().slice(0, 4);
+  if (has("deadline")) {
+    if (!b.deadline) out.deadline = null;
+    else if (/^\d{4}-\d{2}-\d{2}$/.test(String(b.deadline))) out.deadline = String(b.deadline);
+    else return { error: "deadline must be YYYY-MM-DD." };
+  }
+  text("title", 200); text("bounty", 200); text("sponsor", 200); text("summary", 4000); text("problem", 8000);
+  if (has("tags")) out.tags = JSON.stringify(list(b.tags).map((s) => String(s).trim()).filter(Boolean).slice(0, 12));
+  if (has("pledges")) {
+    const ids = list(b.pledges).map((s) => String(s).trim().toUpperCase()).filter((s) => /^I\.(0[1-9]|1[0-2])$/.test(s));
+    out.pledges = JSON.stringify([...new Set(ids)]);
+  }
+  if (has("tranches")) {
+    const t = (Array.isArray(b.tranches) ? b.tranches : [])
+      .map((x) => ({ name: String((x && x.name) || "").trim().slice(0, 60), pct: Math.max(0, Math.min(100, Number(x && x.pct) || 0)) }))
+      .filter((x) => x.name).slice(0, 8);
+    out.tranches = JSON.stringify(t);
+  }
+  if (has("is_demo")) out.is_demo = b.is_demo ? 1 : 0;
+  return { fields: out };
+}
+
+// Back-fill the campaign model on the original seeded quests and add the two flagship
+// examples. Runs ONCE per database (marker in app_meta), so admins can edit freely after.
+// Figures are demo figures (is_demo = 1); the flagship "first OS moment" quest has NO invented goal.
+async function seedQuestModel(env) {
+  await env.DB.prepare("CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY, value TEXT)").run();
+  const done = await env.DB.prepare("SELECT value FROM app_meta WHERE key = ?").bind("quest_model_v1").first();
+  if (done) return;
+
+  const inDays = (n) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+  const backfill = [
+    // id, type, goal, raised, backers, days to deadline, pledges the quest advances
+    ["plastic-to-fuel", "prize", 25000, 15500, 31, 45, ["I.11", "I.09"]],
+    ["consent-handshake", "prize", 8000, 8000, 12, 30, ["I.02", "I.03"]],
+    ["prove-human", "startup", 12000, 4200, 18, 75, ["I.01", "I.02"]],
+  ];
+  for (const [id, type, goal, raised, backers, days, pledges] of backfill) {
+    await env.DB.prepare(
+      `UPDATE quests SET type = ?, goal = ?, raised = ?, backers = ?, deadline = ?, sponsor = ?, pledges = ?, tranches = ?, is_demo = 1
+       WHERE id = ? AND goal IS NULL`
+    ).bind(type, goal, raised, backers, inDays(days), "Founding sponsors", JSON.stringify(pledges), JSON.stringify(DEFAULT_TRANCHES[type]), id).run();
+  }
+
+  const adds = [
+    { id: "first-os-moment", type: "startup", title: "Humanity’s first OS moment: the proof of concept", bounty: "Pool opens at goal",
+      summary: "Winning teams build the first working proof of the Constitutional OS with their winnings, then the full solution they pitched.",
+      problem: "Build the first working proof of the Constitutional OS: the firewall, the personal agent and the Ledger, working together. Teams pitch, humanity’s panel chooses, and funding unlocks in milestone tranches: award, proof of concept, then the solution.",
+      tags: ["OS", "Startup funding"], sponsor: "Founders Series backers", pledges: ["I.01", "I.02", "I.09", "I.12"], goal: null, raised: 0, backers: 0, deadline: null },
+    { id: "civic-ai-literacy", type: "crowd", title: "Open civic-AI literacy curriculum", bounty: "$15,000 goal",
+      summary: "Plain-language, open curricula so people can audit the models that govern them.",
+      problem: "Most people cannot tell what an AI system is doing to them. Build free, open, plain-language courses in many languages that teach anyone to question and audit the systems that affect their life.",
+      tags: ["Education", "Open source"], sponsor: "Community campaign", pledges: ["I.04", "I.07"], goal: 15000, raised: 3900, backers: 64, deadline: inDays(40) },
+  ];
+  for (const a of adds) {
+    await env.DB.prepare(
+      `INSERT OR IGNORE INTO quests (id, title, bounty, status, summary, problem, tags, type, goal, raised, currency, deadline, backers, sponsor, pledges, tranches, is_demo)
+       VALUES (?,?,?,'Open',?,?,?,?,?,?,'USD',?,?,?,?,?,1)`
+    ).bind(a.id, a.title, a.bounty, a.summary, a.problem, JSON.stringify(a.tags), a.type, a.goal, a.raised, a.deadline, a.backers, a.sponsor,
+      JSON.stringify(a.pledges), JSON.stringify(DEFAULT_TRANCHES[a.type])).run();
+  }
+
+  await env.DB.prepare("INSERT OR REPLACE INTO app_meta (key, value) VALUES (?, ?)").bind("quest_model_v1", new Date().toISOString()).run();
 }
 
 // Second live survey — the stance questions shown on the petition page wizard.

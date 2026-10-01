@@ -4,6 +4,7 @@
  * No auth required
  */
 import { json, jsonError, optionsResponse } from "./_shared.js";
+import { seedCmsFromArchive } from "./_cms.js";
 
 export async function onRequestGet(context) {
   const { request, env } = context;
@@ -15,6 +16,9 @@ export async function onRequestGet(context) {
     if (!env.DB) {
       return jsonError("Content service unavailable.");
     }
+
+    // First read on a fresh database: import the archived live-site copy (best-effort, once).
+    try { await seedCmsFromArchive(env); } catch (e) { /* never block content reads */ }
 
     // Get specific section
     if (pageKey && sectionKey) {
